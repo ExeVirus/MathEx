@@ -1,0 +1,48 @@
+# Grammar for MathEx, expecting Variables have already been replaced with numbers as needed
+
+Expression  <-  Atomic (Operator Atomic)*
+
+Atomic      <-  Number
+            /   Function '(' Expression ')'
+            /   '(' Expression ')'
+
+Number      <-  [0-9]+ '.' [0-9]+
+            /   [0-9]+
+
+Function    <-  'abs'
+            /   'max'
+            /   'min'
+            /   'log'
+            /   'pow'
+            /   'sin'
+            /   'cos'
+            /   'tan'
+            /   'asin'
+            /   'acos'
+            /   'atan2'
+            /   'sinh'
+            /   'cosh'
+            /   'tanh'
+            /   'asinh'
+            /   'acosh'
+            /   'atanh2'
+            /   'ceil'
+            /   'floor'
+
+Operator    <-  '+'
+            /   '-'
+            /   '*'
+            /   '/'
+            /   '%'
+            /   '<'
+            /   '>'
+            /   '<='
+            /   '>='
+            /   '=='
+            /   '||'
+            /   '&&'
+            /   '&'
+            /   '|'
+            /   '^'
+            /   '~'
+            /   '!'
