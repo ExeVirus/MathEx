@@ -1,14 +1,13 @@
 # Grammar for MathEx, expecting Variables have already been replaced with numbers as needed
 
 Expression  <-  Atomic (Operator Atomic)*
-
 Atomic      <-  Number
+            /   Variable
             /   Function '(' Expression ')'
             /   '(' Expression ')'
-
 Number      <-  [0-9]+ '.' [0-9]+
             /   [0-9]+
-
+Variable    <-  [A-P]+
 Function    <-  'abs'
             /   'max'
             /   'min'
@@ -28,7 +27,6 @@ Function    <-  'abs'
             /   'atanh2'
             /   'ceil'
             /   'floor'
-
 Operator    <-  '+'
             /   '-'
             /   '*'
