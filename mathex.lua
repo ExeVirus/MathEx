@@ -289,13 +289,13 @@ handleFunction = function(exp, pos)
     -- find match
     for i=1, #functions do
         local functionToMatch = functions[i]
-        if string.sub(exp, 1, #functionToMatch) == functionToMatch then
+        if #exp:sub(exp:find(patterns.Function)) == #functionToMatch and string.sub(exp, 1, #functionToMatch) == functionToMatch then
             match = functionToMatch
             break
         end
     end
     if match == nil then
-        tokenizationError(pos, "Invalid function '" .. exp:sub(exp:find(patterns.Function)) .. "'")
+        return tokenizationError(pos, "Invalid function '" .. exp:sub(exp:find(patterns.Function)) .. "'")
     end
     return {
         type = typesToNum.Function,
@@ -345,7 +345,7 @@ end
 -- And the final phase, where function arguments commas, and matching parenthesis
 -- are handled, happens during/after building the expression into RPN
 -------------------------------------------------------------------------------------
-
+local isLeftAssociative, isRightAssociative
 postTokenizationValidation = function(tokens, variables)
     local variableTracker = {} -- will slowly populate
     for i=1, #tokens do
@@ -353,7 +353,7 @@ postTokenizationValidation = function(tokens, variables)
         local current = tokens[i]
         local next = tokens[i+1]
         local function makeError(token, str)
-            return table.concat({"Syntax Error: ", types[token.type], " ", humanReadableValue[token.type](token.value), " at ", token.pos, str})
+            return table.concat({"Syntax Error: ", types[token.type], " '", humanReadableValue[token.type](token.value), "' at ", token.pos, str})
         end
 
     -- Functions require '(''
@@ -363,8 +363,7 @@ postTokenizationValidation = function(tokens, variables)
             end
         elseif current.type == typesToNum.Symbol then
     -- Each left associative operator has a left operand
-            local associativity = symbolNumtoAssociativity[current.value]
-            if associativity == 0 or associativity == 2 then
+            if isLeftAssociative(current) then
                 if not last then
                     return makeError(current, " requires a value to the left.")
                 elseif not (
@@ -376,12 +375,13 @@ postTokenizationValidation = function(tokens, variables)
                 end
             end
     -- Each Right associative operator has a right operand
-            if associativity >= 1 then
+            if isRightAssociative(current) then
                 if not next then
                     return makeError(current, " requires a value to the right.")
                 elseif not (
                                 next.type == typesToNum.Number   or 
                                 next.type == typesToNum.Variable or
+                                next.type == typesToNum.Function or
                                 (next.type == typesToNum.Symbol and next.value == symbolToNum["("])
                            ) then
                     return makeError(current, " requires a value to the right.")
@@ -413,6 +413,16 @@ postTokenizationValidation = function(tokens, variables)
     return nil
 end
 
+isLeftAssociative = function(token)
+    local associativity = symbolNumtoAssociativity[token.value]
+    return associativity == 0 or associativity == 2
+end
+
+isRightAssociative = function(token)
+    local associativity = symbolNumtoAssociativity[token.value]
+    return associativity >= 1
+end
+
 -------------------------------------------------------------------------------------
 --
 --     ___ _____ _   ___ _  __  ___ _   _ ___ _    ___  ___ ___ 
@@ -421,16 +431,86 @@ end
 --    |___/ |_/_/ \_\___|_|\_\ |___/\___/|___|____|___/|___|_|_\
 --                       (And simplifier)
 -------------------------------------------------------------------------------------
-local copy
+local copy, isSymbol
 local function buildStack(tokens)
     local outputStack = {}
     local operatorStack = {}
+    local function popOperator(token)
+        table.insert(outputStack, token)
+        operatorStack[#operatorStack] = nil
+        return operatorStack[#operatorStack]
+    end
+    local function makeError(token, str)
+        return nil, table.concat({"Syntax Error: ", types[token.type], " '", humanReadableValue[token.type](token.value), "' at ", token.pos, str})
+    end
 
     for i=1, #tokens do
         local token = tokens[i]
+        if token.type == typesToNum.Number or token.type == typesToNum.Variable then
+    -- Numbers and Variables go directly to output stack
+            table.insert(outputStack, token)
+        elseif token.type == typesToNum.Function then
+    -- All functions go directly to operator stack
+            table.insert(operatorStack, token)
+        elseif token.type == typesToNum.Symbol then
+    -- All '(' go directly to operator stack
+            if isSymbol(token, "(") then
+                table.insert(operatorStack, token)
+    -- All ')' pop operators until a matching '(' is found, pops it, and any function immediately after
+            elseif isSymbol(token, ")") then
+                local top = operatorStack[#operatorStack]
+                if top == nil then
+                    return makeError(token, " no matching '(' found.")
+                end
+                while not isSymbol(top, "(") do
+                    table.insert(outputStack, top)
+                    operatorStack[#operatorStack] = nil
+                    top = operatorStack[#operatorStack]
+                    if top == nil then
+                        return makeError(token, " no matching '(' found.")
+                    end
+                end
+                -- pop '('
+                operatorStack[#operatorStack] = nil
+                -- pop function if there
+                top = operatorStack[#operatorStack]
+                if top and top.type == typesToNum.Function then
+                    table.insert(outputStack, top)
+                    operatorStack[#operatorStack] = nil --pop
+                end
+            else
+    -- All other operator symbols use precedence and left associativity to determine stack
+                local top = operatorStack[#operatorStack]
+                -- while there is an operator and it's not '('
+                while top and not isSymbol(top, "(") do
+                    if symbolNumToPrecedence[top.value] < symbolNumToPrecedence[token.value] then
+                        top = popOperator(top)
+                    elseif symbolNumToPrecedence[top.value] == symbolNumToPrecedence[token.value] and isLeftAssociative(token) then
+                        top = popOperator(top)
+                    else
+                        break
+                    end
+                end
+                table.insert(operatorStack, token)
+            end
+    -- Commas pop until they reach a '('
+        elseif token.type == typesToNum.Comma then
+            local top = operatorStack[#operatorStack]
+            while top and not isSymbol(top, "(") do
+                top = popOperator(top)
+            end
+        end
     end
-
+    -- pop the rest of the operatorStack, if any
+    local top = operatorStack[#operatorStack]
+    while top ~= nil do
+        top = popOperator(top)
+    end
     return outputStack
+end
+
+isSymbol = function(token, sym)
+    return token.type == typesToNum.Symbol and symbols[token.value] == sym
 end
 -------------------------------------------------------------------------------------
 --     ___ _____ _   ___ _  __  _____  _____ ___ _   _ _____ ___  ___
@@ -474,6 +554,12 @@ local function mathex(expression, ...)
     if errorstr then
         return -1, errorstr
     end
+
+    local toDump = {}
+    for i=1, #stack do
+        table.insert(toDump, humanReadableValue[stack[i].type](stack[i].value) .. " ")
+    end
+    print(table.concat(toDump))
 
     local result, errorstr = executeStack(stack, variables)
     if errorstr then
