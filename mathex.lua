@@ -1,13 +1,13 @@
--- ███╗   ███╗ █████╗ ████████╗██╗  ██╗███████╗██╗  ██╗
--- ████╗ ████║██╔══██╗╚══██╔══╝██║  ██║██╔════╝╚██╗██╔╝
--- ██╔████╔██║███████║   ██║   ███████║█████╗   ╚███╔╝
--- ██║╚██╔╝██║██╔══██║   ██║   ██╔══██║██╔══╝   ██╔██╗
--- ██║ ╚═╝ ██║██║  ██║   ██║   ██║  ██║███████╗██╔╝ ██╗
--- ╚═╝     ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
+--       ███╗   ███╗ █████╗ ████████╗██╗  ██╗███████╗██╗  ██╗
+--       ████╗ ████║██╔══██╗╚══██╔══╝██║  ██║██╔════╝╚██╗██╔╝
+--       ██╔████╔██║███████║   ██║   ███████║█████╗   ╚███╔╝
+--       ██║╚██╔╝██║██╔══██║   ██║   ██╔══██║██╔══╝   ██╔██╗
+--       ██║ ╚═╝ ██║██║  ██║   ██║   ██║  ██║███████╗██╔╝ ██╗
+--       ╚═╝     ╚═╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝
 --
--- Regex for equations
+--                     Regex for equations
 --
--- Copyright 2024 ExeVirus
+--                   Copyright 2024 ExeVirus
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -26,10 +26,11 @@
 --           1. Overview
 --           2. Syntax
 --           3. Tokenization Implementation
---           4. Mathex Algorithm
---           5. Actual Mathex Function Definition
---           6. Appendix A: Error Codes and their meaning
---           7. Language-Specific Utility Functions
+--           4. PostTokenization Validation (#2)
+--           5. Stack Builder Algorithm (shunting-yard variant)
+--           6. Execution Algorithm
+--           7. Actual Mathex Function Definition
+--           8. Language-Specific Utility Functions
 --
 --         ___ __   __ ___  ___ __   __ ___  ___ __      __
 --        / _ \\ \ / /| __|| _ \\ \ / /|_ _|| __|\ \    / /
@@ -47,10 +48,9 @@
 --     mathex("equation", arrayOfValues)
 --
 -- The return value for a *valid* mathex call is either 0 or 1.
--- Negative values indicate an error during processing.
--- The table of supported processing errors are in Appendix A.
+-- -1 indicates an error during processing.
 --
--- For lua's mathex library, Error strings are also returned:
+-- For lua's mathex library, Error strings are *returned*:
 ----
 -- result, errorstr = mathex("equation", val1, val2,...valN)
 -- if result < 0 then error(errorstr)
@@ -73,18 +73,18 @@
 --               4. Functions    (min, max, abs, etc.)
 --               5. Commas       ,
 --
---                     Whitespace is ignored.
+--                  No Whitespace allowed (for now)!
 --
 -- C++ Operator Precedence is used, with the addition of ^ for power
 --                   See the symbols table below
 --
 -------------------------------------------------------------------------------------
 
-local tokens = {"Number","Variable","Symbol","Function","Comma",}
+local types = {"Number","Variable","Symbol","Function","Comma",}
 
-local tokensToNum = {}
-for i=1, #tokens do
-    tokensToNum[tokens[i]] = i
+local typesToNum = {}
+for i=1, #types do
+    typesToNum[types[i]] = i
 end
 
 local symbols = {
@@ -116,6 +116,21 @@ local symbolNumToPrecedence = {
     11,
     12,
 }
+-- 0 left only, 1 right only, 2 both
+local symbolNumtoAssociativity = {
+    1,0,
+    1,1,
+    2,
+    2,2,2,
+    2,2,
+    2,2,
+    2,2,2,2,
+    2,2,
+    2,
+    2,
+    2,
+    2
+}
 
 local symbolToNum = {}
 for i=1, #symbols do
@@ -140,7 +155,7 @@ local humanReadableValue = {
         local numCharacters = tonumber(math.floor(tonumber(v) ^ (1/26)))
         local str = ""
         for i=1,numCharacters do
-            str = str .. string.char((i % (26 ^ i))+64)
+            str = str .. string.char((v % (26 ^ i))+64)
         end
         return str
     end,
@@ -179,6 +194,7 @@ local humanReadableValue = {
 local tokenize, getNextToken
 local handleNumber, handleVariable, handleSymbol, handleFunction, handleComma
 local tokenizationError, humanReadableToken
+local postTokenizationValidation
 
 local patterns = {
     Number   = "^%d+%.?%d*",
@@ -227,7 +243,7 @@ handleNumber = function(exp, pos)
         return tokenizationError(pos+stop-1, "Remove Terminating decimal place '.'")
     end
     return {
-        type = tokensToNum.Number,
+        type = typesToNum.Number,
         value = tonumber(exp:sub(start,stop)),
         pos = pos,
     }, pos + stop
@@ -243,7 +259,7 @@ handleVariable = function(exp, pos)
         value = value + toValue(match:sub(i,i)) * 26 ^ (#match-i)
     end
     return {
-        type = tokensToNum.Variable,
+        type = typesToNum.Variable,
         value = value,
         pos = pos,
     }, pos + stop
@@ -261,7 +277,7 @@ handleSymbol = function(exp, pos)
         end
     end
     return {
-        type = tokensToNum.Symbol,
+        type = typesToNum.Symbol,
         value = symbolToNum[match],
         pos = pos,
     }, pos + match:len()
@@ -282,7 +298,7 @@ handleFunction = function(exp, pos)
         tokenizationError(pos, "Invalid function '" .. exp:sub(exp:find(patterns.Function)) .. "'")
     end
     return {
-        type = tokensToNum.Function,
+        type = typesToNum.Function,
         value = functionToNum[match],
         pos = pos,
     }, pos + match:len()
@@ -291,7 +307,7 @@ end
 ----------- handleComma()
 handleComma = function(exp, pos)
     return {
-        type = tokensToNum.Comma,
+        type = typesToNum.Comma,
         value = ",",
         pos = pos,
     }, pos + 1
@@ -307,17 +323,124 @@ end
 
 ----------- humanReadableToken()
 humanReadableToken = function(token)
-    return table.concat({tokens[token.type], " '", humanReadableValue[token.type](token.value), "'", " at ", token.pos})
+    return table.concat({types[token.type], " '", humanReadableValue[token.type](token.value), "'", " at ", token.pos})
 end
 
 -------------------------------------------------------------------------------------
---          _   _    ___  ___  ___ ___ _____ _  _ __  __
---         /_\ | |  / __|/ _ \| _ \_ _|_   _| || |  \/  |
---        / _ \| |_| (_ | (_) |   /| |  | | | __ | |\/| |
---       /_/ \_\____\___|\___/|_|_\___| |_| |_||_|_|  |_|
---              (Spent all 3 brain cells on this one)
+--     __   ___   _    ___ ___   _ _____ ___ ___  _  _   ___
+--     \ \ / /_\ | |  |_ _|   \ /_\_   _|_ _/ _ \| \| | |_  )
+--      \ V / _ \| |__ | || |) / _ \| |  | | (_) | .` |  / /
+--       \_/_/ \_\____|___|___/_/ \_\_| |___\___/|_|\_| /___|
+--              (There's actually 3 validation steps)
+--
+-- Validation happens in three places, tokenization(1), which garuntees
+-- that only valid tokens are given. This phase, which validates:
+-- 
+-- * Functions having a following opening parenthesis
+-- * Each operator has its associative operands (1 or 2) beside it
+-- * No operand is to the left of another operand
+-- * No operand is to the left of any function
+-- * Variables start at A and are contiguous thereafter, i.e. no skipping
+--
+-- And the final phase, where function arguments commas, and matching parenthesis
+-- are handled, happens during/after building the expression into RPN
 -------------------------------------------------------------------------------------
 
+postTokenizationValidation = function(tokens, variables)
+    local variableTracker = {} -- will slowly populate
+    for i=1, #tokens do
+        local last = tokens[i-1]
+        local current = tokens[i]
+        local next = tokens[i+1]
+        local function makeError(token, str)
+            return table.concat({"Syntax Error: ", types[token.type], " ", humanReadableValue[token.type](token.value), " at ", token.pos, str})
+        end
+
+    -- Functions require '(''
+        if current.type == typesToNum.Function then
+            if not (next.type == typesToNum.Symbol and next.value == symbolToNum["("]) then
+                return makeError(current, " requires an opening '(' immediately following.")
+            end
+        elseif current.type == typesToNum.Symbol then
+    -- Each left associative operator has a left operand
+            local associativity = symbolNumtoAssociativity[current.value]
+            if associativity == 0 or associativity == 2 then
+                if not last then
+                    return makeError(current, " requires a value to the left.")
+                elseif not (
+                                last.type == typesToNum.Number   or 
+                                last.type == typesToNum.Variable or
+                                (last.type == typesToNum.Symbol and last.value == symbolToNum[")"])
+                           ) then
+                    return makeError(current, " requires a value to the left.")
+                end
+            end
+    -- Each Right associative operator has a right operand
+            if associativity >= 1 then
+                if not next then
+                    return makeError(current, " requires a value to the right.")
+                elseif not (
+                                next.type == typesToNum.Number   or 
+                                next.type == typesToNum.Variable or
+                                (next.type == typesToNum.Symbol and next.value == symbolToNum["("])
+                           ) then
+                    return makeError(current, " requires a value to the right.")
+                end
+            end
+        elseif current.type == typesToNum.Number or current.type == typesToNum.Variable then
+    -- Each operand is not left of any function or operand
+            if next and (next.type == typesToNum.Number or next.type == typesToNum.Variable or next.type == typesToNum.Function) then
+                return makeError(current, table.concat({" cannot be left of ", types[next.type], " ", humanReadableValue[next.type](next.value), "."}))
+            end
+    -- Count variables to check at the end
+            if current.type == typesToNum.Variable then
+                variableTracker[current.value] = true
+            end
+        end
+    end
+    -- Count handle Variable mismatches
+    local count = 0
+    for _ in pairs(variableTracker) do count = count + 1 end
+    for i=1, #variables do
+        if variableTracker[i] == nil then
+            if i > count then
+                return table.concat({"Syntax Error: The provided expression uses less variables than the number provided."})
+            else 
+                return table.concat({"Syntax Error: The provided expression skips using variable '", humanReadableValue[typesToNum.Variable](i) ,"'."})
+            end
+        end
+    end
+    return nil
+end
+
+-------------------------------------------------------------------------------------
+--
+--     ___ _____ _   ___ _  __  ___ _   _ ___ _    ___  ___ ___ 
+--    / __|_   _/_\ / __| |/ / | _ ) | | |_ _| |  |   \| __| _ \
+--    \__ \ | |/ _ \ (__| ' <  | _ \ |_| || || |__| |) | _||   /
+--    |___/ |_/_/ \_\___|_|\_\ |___/\___/|___|____|___/|___|_|_\
+--                       (And simplifier)
+-------------------------------------------------------------------------------------
+local copy
+local function buildStack(tokens)
+    local outputStack = {}
+    local operatorStack = {}
+
+    for i=1, #tokens do
+        local token = tokens[i]
+    end
+
+    return outputStack
+end
+-------------------------------------------------------------------------------------
+--     ___ _____ _   ___ _  __  _____  _____ ___ _   _ _____ ___  ___
+--    / __|_   _/_\ / __| |/ / | __\ \/ / __/ __| | | |_   _/ _ \| _ \
+--    \__ \ | |/ _ \ (__| ' <  | _| >  <| _| (__| |_| | | || (_) |   /
+--    |___/ |_/_/ \_\___|_|\_\ |___/_/\_\___\___|\___/  |_| \___/|_|_\
+-------------------------------------------------------------------------------------
+local function executeStack(stack, variables)
+
+end
 
 -------------------------------------------------------------------------------------
 local verifyInput
@@ -332,30 +455,42 @@ local function mathex(expression, ...)
     if errorstr then
         return -1, errorstr
     end
+
     local tokens, errorstr = tokenize(expression)
-    if errorstr then --error
+    if errorstr then
         return -1, errorstr
     end
+
+    local errorstr = postTokenizationValidation(tokens, variables)
+    if errorstr then
+        return -1, errorstr
+    end
+
     for i=1, #tokens do 
         print(humanReadableToken(tokens[i]))
     end
 
+    local stack, errorstr = buildStack(tokens)
+    if errorstr then
+        return -1, errorstr
+    end
+
+    local result, errorstr = executeStack(stack, variables)
+    if errorstr then
+        return -1, errorstr
+    end
+
+    return result
 end
-
---          _   ___ ___ ___ _  _ ___ _____  __    _
---         /_\ | _ \ _ \ __| \| |   \_ _\ \/ /   /_\
---        / _ \|  _/  _/ _|| .` | |) | | >  <   / _ \
---       /_/ \_\_| |_| |___|_|\_|___/___/_/\_\ /_/ \_\
---                  (Appendix A: Error Codes)
-
+-------------------------------------------------------------------------------------
 --     _   _  _____  ___  _     ___  _____  ___  ___  ___
 --    | | | ||_   _||_ _|| |   |_ _||_   _||_ _|| __|/ __|
 --    | |_| |  | |   | | | |__  | |   | |   | | | _| \__ \
 --     \___/   |_|  |___||____||___|  |_|  |___||___||___/
 --         (Language-Specific Utility Functionality)
-
+-------------------------------------------------------------------------------------
 ----------- copy()
-local function copy(obj, seen)
+copy = function(obj, seen)
     if type(obj) ~= 'table' then return obj end
     if seen and seen[obj] then return seen[obj] end
     local s = seen or {}
@@ -388,6 +523,8 @@ verifyInput = function(expression, ...)
             end
         elseif type(select(1, ...)) ~= "number" then
             return nil, "mathex() error: your second argument is not a table or number."
+        else
+            return {select(1, ...)}
         end
     else
         local variables = {}
