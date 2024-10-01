@@ -25,9 +25,9 @@
 --
 --           1. Overview
 --           2. Syntax
---           3. Tokenization Implementation
---           4. PostTokenization Validation (#2)
---           5. Stack Builder Algorithm (shunting-yard variant)
+--           3. Tokenization Implementation (validation step #1)
+--           4. PostTokenization Validation (validation step #2)
+--           5. Stack Builder Algorithm (shunting-yard variant, validation step #3)
 --           6. Execution Algorithm
 --           7. Actual Mathex Function Definition
 --           8. Language-Specific Utility Functions
@@ -138,16 +138,13 @@ for i=1, #symbols do
 end
 
 local functions = {
-    "abs", "log", "exp", "sin", "cos", "tan", "asin", "acos", "atan2", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "ceil", "floor", "trunc",
-    "max", "min", "pow", -- two-argument functions
+    "abs", "acos", "asin", "atan2", "ceil", "cos", "cosh", "deg", "exp", "floor", "log", "max", "min", "pow", "rad", "sin", "sinh", "tan", "tanh",
 }
 
 local functionToNum = {}
 for i=1, #functions do
     functionToNum[functions[i]] = i
 end
-
-local function isTwoArgFunction(id) return id > functionToNum.trunc end
 
 local humanReadableValue = {
     function(v) return v end,           -- Number
@@ -179,6 +176,7 @@ local humanReadableValue = {
 -- {
 --     type = ["num","var","sym","func"]
 --     value = [value,value,enum]
+--     pos = position_in_original_expression
 -- }
 --
 -- However, type is stored as a number, just as all the values
@@ -201,7 +199,8 @@ local patterns = {
     Variable = "^%u+",
     Symbol   = "^[%(%)%+%-%*/%%<>=|&%^~!]",
     Function = "^%l+",
-    Comma    = "^,"
+    Comma    = "^,",
+    Space    = "^%s+"
 }
 
 ----------- Tokenize
@@ -221,6 +220,12 @@ end
 ----------- getNextToken()
 getNextToken = function(expression, pos)
     local exp = expression:sub(pos)
+    -- handle spaces by moving position forward past them
+    if exp:match(patterns.Space) then
+        local start, stop = exp:find(patterns.Space)
+        pos = pos + stop
+        exp = expression:sub(pos)
+    end
     if(exp:match(patterns.Number)) then
         return handleNumber(exp, pos)
     elseif(exp:match(patterns.Variable)) then
@@ -331,19 +336,16 @@ end
 --     \ \ / /_\ | |  |_ _|   \ /_\_   _|_ _/ _ \| \| | |_  )
 --      \ V / _ \| |__ | || |) / _ \| |  | | (_) | .` |  / /
 --       \_/_/ \_\____|___|___/_/ \_\_| |___\___/|_|\_| /___|
---              (There's actually 3 validation steps)
+--              (There's actually 2 validation steps)
 --
 -- Validation happens in three places, tokenization(1), which garuntees
--- that only valid tokens are given. This phase, which validates:
+-- that only valid tokens are given. This phase validates:
 -- 
 -- * Functions having a following opening parenthesis
 -- * Each operator has its associative operands (1 or 2) beside it
 -- * No operand is to the left of another operand
 -- * No operand is to the left of any function
 -- * Variables start at A and are contiguous thereafter, i.e. no skipping
---
--- And the final phase, where function arguments commas, and matching parenthesis
--- are handled, happens during/after building the expression into RPN
 -------------------------------------------------------------------------------------
 local isLeftAssociative, isRightAssociative
 postTokenizationValidation = function(tokens, variables)
@@ -429,7 +431,7 @@ end
 --    / __|_   _/_\ / __| |/ / | _ ) | | |_ _| |  |   \| __| _ \
 --    \__ \ | |/ _ \ (__| ' <  | _ \ |_| || || |__| |) | _||   /
 --    |___/ |_/_/ \_\___|_|\_\ |___/\___/|___|____|___/|___|_|_\
---                       (And simplifier)
+--                       (And validation step 3)
 -------------------------------------------------------------------------------------
 local copy, isSymbol
 local function buildStack(tokens)
@@ -512,14 +514,134 @@ end
 isSymbol = function(token, sym)
     return token.type == typesToNum.Symbol and symbols[token.value] == sym
 end
+
 -------------------------------------------------------------------------------------
 --     ___ _____ _   ___ _  __  _____  _____ ___ _   _ _____ ___  ___
 --    / __|_   _/_\ / __| |/ / | __\ \/ / __/ __| | | |_   _/ _ \| _ \
 --    \__ \ | |/ _ \ (__| ' <  | _| >  <| _| (__| |_| | | || (_) |   /
 --    |___/ |_/_/ \_\___|_|\_\ |___/_/\_\___\___|\___/  |_| \___/|_|_\
 -------------------------------------------------------------------------------------
+local executeSymbol, executeFunction
 local function executeStack(stack, variables)
+    local operandStack = {}
 
+    for i=1, #stack do
+        local token = stack[i]
+        if token.type == typesToNum.Number then
+            table.insert(operandStack, token.value)
+        elseif token.type == typesToNum.Variable then
+            table.insert(operandStack, variables[token.value])
+        elseif token.type == typesToNum.Symbol then
+            executeSymbol(operandStack, token.value)
+        elseif token.type == typesToNum.Function then
+            executeFunction(operandStack, token.value)
+        end
+    end
+
+    if #operandStack ~= 1 then
+        return nil, "MAJOR ERROR: there are " .. #operand .. " numbers on the execution stack."
+    end
+    return operandStack[1]
+end
+
+local bit = require("bit")
+executeSymbol = function(stack, sym)
+    sym = symbols[sym] or sym
+    local function pop()
+        local val = stack[#stack]
+        stack[#stack] = nil
+        return val
+    end
+    local function push(val)
+        table.insert(stack, val)
+    end
+    local op2 = pop() -- op2, if relevant is on the top of the stack, always
+    if sym == "~" then
+        push(bit.bnot(math.floor(op2)))
+    elseif sym == "!" then
+        push(op2 == 0)
+    elseif sym == "^" then
+        push(pop() ^ op2)
+    elseif sym == "*" then
+        push(pop() * op2)
+    elseif sym == "/" then
+        push(pop() / op2)
+    elseif sym == "%" then
+        push(math.floor(pop()) / math.floor(op2))
+    elseif sym == "+" then
+        push(pop() + op2)
+    elseif sym == "-" then
+        push(pop() - op2)
+    elseif sym == "<<" then
+        push(bit.lshift(math.floor(pop()), math.floor(op2)))
+    elseif sym == ">>" then
+        push(bit.rshift(math.floor(pop()), math.floor(op2)))
+    elseif sym == "<" then
+        push(pop() < op2)
+    elseif sym == "<=" then
+        push(pop() <= op2)
+    elseif sym == ">" then
+        push(pop() > op2)
+    elseif sym == ">=" then
+        push(pop() >= op2)
+    elseif sym == "==" then
+        push(pop() == op2)
+    elseif sym == "!=" then
+        push(pop() ~= op2)
+    elseif sym == "&" then
+        push(bit.band(math.floor(pop()), math.floor(op2)))
+    elseif sym == "&&" then
+        push(pop() and op2)
+    elseif sym == "|" then
+        push(bit.bor(math.floor(pop()), math.floor(op2)))
+    elseif sym == "||" then
+        push(pop() or op2)
+    else
+        error("Unrecognized symbol: " .. sym)
+    end
+end
+
+-- "abs", "acos", "asin", "atan2", "ceil", "cos", "cosh", "deg", "exp", "floor", "log", "max", "min", "pow", "rad", "sin", "sinh", "tan", "tanh",
+executeFunction = function(stack, func)
+    func = functions[func] or func
+    local function pop()
+        local val = stack[#stack]
+        stack[#stack] = nil
+        return val
+    end
+    local function push(val)
+        table.insert(stack, val)
+    end
+    local op2 = pop() -- op2, if relevant is on the top of the stack, always
+    if sym == "abs" then
+        push(math.abs(op2))
+    elseif sym == "acos" then
+        push(math.acos(op2))
+    elseif sym == "asin" then
+        push(math.asin(op2))
+    elseif sym == "atan2" then
+        push(math.atan2(op2))
+    elseif sym == "ceil" then
+        push(math.ceil(op2))
+    elseif sym == "cos" then
+        push(math.cos(op2))
+    elseif sym == "cosh" then
+        push(math.cosh(op2))
+    elseif sym == "deg" then
+        push(math.deg(op2))
+    elseif sym == "exp" then
+        push(math.exp(op2))
+    elseif sym == "floor" then
+        push(math.floor(op2))
+    elseif sym == "log" then
+        push(math.log(op2))
+    elseif sym == "max" then
+        push(math.max(pop(), op2))
+    elseif sym == "min" then
+        push(math.min(pop(), op2))
+    else
+        error("Unrecognized symbol: " .. func)
+    end
 end
 
 -------------------------------------------------------------------------------------
@@ -546,20 +668,20 @@ local function mathex(expression, ...)
         return -1, errorstr
     end
 
-    for i=1, #tokens do 
-        print(humanReadableToken(tokens[i]))
-    end
+    -- for i=1, #tokens do 
+    --     print(humanReadableToken(tokens[i]))
+    -- end
 
     local stack, errorstr = buildStack(tokens)
     if errorstr then
         return -1, errorstr
     end
 
-    local toDump = {}
-    for i=1, #stack do
-        table.insert(toDump, humanReadableValue[stack[i].type](stack[i].value) .. " ")
-    end
-    print(table.concat(toDump))
+    -- local toDump = {}
+    -- for i=1, #stack do
+    --     table.insert(toDump, humanReadableValue[stack[i].type](stack[i].value) .. " ")
+    -- end
+    -- print(table.concat(toDump))
 
     local result, errorstr = executeStack(stack, variables)
     if errorstr then
