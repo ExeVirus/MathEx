@@ -275,11 +275,15 @@ local symbolMatchingArray -- defined in Language-Specific section
 handleSymbol = function(exp, pos)
     local match = nil
     -- find match
-    for _, symbolToMatch in ipairs(symbolMatchingArray) do
-        if string.sub(exp, 1, #symbolToMatch) == symbolToMatch then
+    for i=1, #symbolMatchingArray do
+        local symbolToMatch = symbolMatchingArray[i]
+        if #exp:sub(exp:find(patterns.Symbol)) == #symbolToMatch and string.sub(exp, 1, #symbolToMatch) == symbolToMatch then
             match = symbolToMatch
             break
         end
+    end
+    if match == nil then
+        return tokenizationError(pos, "Invalid symbol '" .. exp:sub(exp:find(patterns.Symbol)) .. "'")
     end
     return {
         type = typesToNum.Symbol,
@@ -390,9 +394,14 @@ postTokenizationValidation = function(tokens, variables)
                 end
             end
         elseif current.type == typesToNum.Number or current.type == typesToNum.Variable then
-    -- Each operand is not left of any function or operand
-            if next and (next.type == typesToNum.Number or next.type == typesToNum.Variable or next.type == typesToNum.Function) then
-                return makeError(current, table.concat({" cannot be left of ", types[next.type], " ", humanReadableValue[next.type](next.value), "."}))
+    -- Each operand is not left of any function or operand, or parenthesis
+            if next and (
+                next.type == typesToNum.Number   or
+                next.type == typesToNum.Variable or
+                next.type == typesToNum.Function or
+                (next.type == typesToNum.Symbol and symbols[next.value] == "(")
+                ) then
+                return makeError(current, table.concat({" cannot be directly left of ", types[next.type], " '", humanReadableValue[next.type](next.value), "'."}))
             end
     -- Count variables to check at the end
             if current.type == typesToNum.Variable then
@@ -403,11 +412,16 @@ postTokenizationValidation = function(tokens, variables)
     -- Count handle Variable mismatches
     local count = 0
     for _ in pairs(variableTracker) do count = count + 1 end
+    if count < #variables then
+        return table.concat({"Syntax Error: The provided expression uses less variables than the number provided."}) 
+    elseif count > #variables then
+        return table.concat({"Syntax Error: The provided expression uses more variables than the number provided."}) 
+    end
     for i=1, #variables do
         if variableTracker[i] == nil then
             if i > count then
                 return table.concat({"Syntax Error: The provided expression uses less variables than the number provided."})
-            else 
+            else
                 return table.concat({"Syntax Error: The provided expression skips using variable '", humanReadableValue[typesToNum.Variable](i) ,"'."})
             end
         end
@@ -433,7 +447,7 @@ end
 --    |___/ |_/_/ \_\___|_|\_\ |___/\___/|___|____|___/|___|_|_\
 --                       (And validation step 3)
 -------------------------------------------------------------------------------------
-local copy, isSymbol
+local copy, isSymbol, dumpStack
 local function buildStack(tokens)
     local outputStack = {}
     local operatorStack = {}
@@ -508,6 +522,14 @@ local function buildStack(tokens)
     while top ~= nil do
         top = popOperator(top)
     end
+
+    -- validaet all parenthesis are gone
+    for i=1, #outputStack do
+        local token = outputStack[i]
+        if isSymbol(token, "(") then
+            return makeError(token, " no matching ')' found.")
+        end
+    end
     return outputStack
 end
 
@@ -539,9 +561,9 @@ local function executeStack(stack, variables)
     end
 
     if #operandStack ~= 1 then
-        return nil, "MAJOR ERROR: there are " .. #operand .. " numbers on the execution stack."
+        return nil, "MAJOR ERROR: there are " .. #operandStack .. " numbers on the execution stack."
     end
-    return operandStack[1]
+    return operandStack[1] ~= 0
 end
 
 local bit = require("bit")
@@ -550,7 +572,11 @@ executeSymbol = function(stack, sym)
     local function pop()
         local val = stack[#stack]
         stack[#stack] = nil
-        return val
+        if tonumber(val) == nil then 
+            return 0
+        else
+            return tonumber(val)
+        end
     end
     local function push(val)
         table.insert(stack, val)
@@ -612,35 +638,36 @@ executeFunction = function(stack, func)
     local function push(val)
         table.insert(stack, val)
     end
+    print("'"..func == "max".."'")
     local op2 = pop() -- op2, if relevant is on the top of the stack, always
-    if sym == "abs" then
+    if func == "abs" then
         push(math.abs(op2))
-    elseif sym == "acos" then
+    elseif func == "acos" then
         push(math.acos(op2))
-    elseif sym == "asin" then
+    elseif func == "asin" then
         push(math.asin(op2))
-    elseif sym == "atan2" then
+    elseif func == "atan2" then
         push(math.atan2(op2))
-    elseif sym == "ceil" then
+    elseif func == "ceil" then
         push(math.ceil(op2))
-    elseif sym == "cos" then
+    elseif func == "cos" then
         push(math.cos(op2))
-    elseif sym == "cosh" then
+    elseif func == "cosh" then
         push(math.cosh(op2))
-    elseif sym == "deg" then
+    elseif func == "deg" then
         push(math.deg(op2))
-    elseif sym == "exp" then
+    elseif func == "exp" then
         push(math.exp(op2))
-    elseif sym == "floor" then
+    elseif func == "floor" then
         push(math.floor(op2))
-    elseif sym == "log" then
+    elseif func == "log" then
         push(math.log(op2))
-    elseif sym == "max" then
+    elseif func == "max" then
         push(math.max(pop(), op2))
-    elseif sym == "min" then
+    elseif func == "min" then
         push(math.min(pop(), op2))
     else
-        error("Unrecognized symbol: " .. func)
+        error("Unrecognized function: " .. func)
     end
 end
 
@@ -667,10 +694,6 @@ local function mathex(expression, ...)
     if errorstr then
         return -1, errorstr
     end
-
-    -- for i=1, #tokens do 
-    --     print(humanReadableToken(tokens[i]))
-    -- end
 
     local stack, errorstr = buildStack(tokens)
     if errorstr then
@@ -745,6 +768,15 @@ verifyInput = function(expression, ...)
         end
         return variables
     end
+end
+
+----------- dumpStack()
+dumpStack = function(stack)
+    local toDump = {}
+    for i=1, #stack do
+         table.insert(toDump, humanReadableValue[stack[i].type](stack[i].value) .. " ")
+    end
+    print(table.concat(toDump))
 end
 
 symbolMatchingArray = copy(symbols)
