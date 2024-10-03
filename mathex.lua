@@ -138,13 +138,16 @@ for i=1, #symbols do
 end
 
 local functions = {
-    "abs", "acos", "asin", "atan2", "ceil", "cos", "cosh", "deg", "exp", "floor", "log", "max", "min", "pow", "rad", "sin", "sinh", "tan", "tanh",
+    "abs", "acos", "asin", "atan2", "ceil", "cos", "cosh", "deg", "exp", "floor", "log", "rad", "sin", "sinh", "tan", "tanh",
+    "max", "min", "pow", -- two argument functions
 }
 
 local functionToNum = {}
 for i=1, #functions do
     functionToNum[functions[i]] = i
 end
+
+local function isTwoArgFunction(id) return id > functionToNum.tanh end
 
 local humanReadableValue = {
     function(v) return v end,           -- Number
@@ -447,7 +450,7 @@ end
 --    |___/ |_/_/ \_\___|_|\_\ |___/\___/|___|____|___/|___|_|_\
 --                       (And validation step 3)
 -------------------------------------------------------------------------------------
-local copy, isSymbol, dumpStack
+local copy, isSymbol, dumpStack, validateArguments
 local function buildStack(tokens)
     local outputStack = {}
     local operatorStack = {}
@@ -523,18 +526,84 @@ local function buildStack(tokens)
         top = popOperator(top)
     end
 
-    -- validaet all parenthesis are gone
+    -- validate all parenthesis are gone
     for i=1, #outputStack do
         local token = outputStack[i]
         if isSymbol(token, "(") then
             return makeError(token, " no matching ')' found.")
         end
     end
+
+    -- validate all argument requirements are met
+    local result, errorstr = validateArguments(outputStack)
+    if errorstr ~= nil then
+        return nil, errorstr
+    end
+
     return outputStack
 end
 
 isSymbol = function(token, sym)
     return token.type == typesToNum.Symbol and symbols[token.value] == sym
+end
+
+local validateSymbol, validateFunction
+validateArguments = function(inStack)
+    local stack = copy(inStack) -- don't modify the original
+    local function makeError(token, str)
+        return nil, table.concat({"Syntax Error: ", types[token.type], " '", humanReadableValue[token.type](token.value), "' at ", token.pos, str})
+    end
+    local operandStack = {}
+    for i=1, #stack do
+        local token = stack[i]
+        if token.type == typesToNum.Number then
+            table.insert(operandStack, 1)
+        elseif token.type == typesToNum.Variable then
+            table.insert(operandStack, 1)
+        elseif token.type == typesToNum.Symbol then
+            local errorstr = validateSymbol(operandStack, token.value)
+            if errorstr then
+                return makeError(token, errorstr)
+            end
+        elseif token.type == typesToNum.Function then
+            local errorstr = validateFunction(operandStack, token.value)
+            if errorstr then
+                return makeError(token, errorstr)
+            end
+        end
+    end
+end
+
+validateSymbol = function(stack, sym)
+    local assoc = symbolNumtoAssociativity[sym]
+    if assoc == 0 then
+        return " - MAJOR ERROR - there should be no ')' remaining."
+    elseif assoc == 1 then
+        if #stack < 1 then
+            return " no required right operand value."
+        end
+    else
+        if #stack > 1 then -- pop 1
+            stack[#stack] = nil
+        else
+            return " no required first and second operand values."
+        end
+    end
+end
+
+validateFunction = function(stack, func)
+    local isTwoArg = isTwoArgFunction(func)
+    if not isTwoArg then
+        if #stack < 1 then
+            return " no required single operand value."
+        end
+    else
+        if #stack > 1 then -- pop 
+            stack[#stack] = nil
+        else
+            return " no required first and second operand values."
+        end
+    end
 end
 
 -------------------------------------------------------------------------------------
@@ -585,7 +654,11 @@ executeSymbol = function(stack, sym)
     if sym == "~" then
         push(bit.bnot(math.floor(op2)))
     elseif sym == "!" then
-        push(op2 == 0)
+        if (op2 == 0) then
+            push(1)
+        else
+            push(0)
+        end
     elseif sym == "^" then
         push(pop() ^ op2)
     elseif sym == "*" then
@@ -603,25 +676,58 @@ executeSymbol = function(stack, sym)
     elseif sym == ">>" then
         push(bit.rshift(math.floor(pop()), math.floor(op2)))
     elseif sym == "<" then
-        push(pop() < op2)
+        if (pop() < op2) then
+            push(1)
+        else
+            push(0)
+        end
     elseif sym == "<=" then
-        push(pop() <= op2)
+        if (pop() <= op2) then
+            push(1)
+        else
+            push(0)
+        end
     elseif sym == ">" then
-        push(pop() > op2)
+        if (pop() > op2) then
+            push(1)
+        else
+            push(0)
+        end
     elseif sym == ">=" then
-        push(pop() >= op2)
+        if (pop() >= op2) then
+            push(1)
+        else
+            push(0)
+        end
     elseif sym == "==" then
-        push(pop() == op2)
+        if (pop() == op2) then
+            push(1)
+        else
+            push(0)
+        end
     elseif sym == "!=" then
-        push(pop() ~= op2)
+        if (pop() ~= op2) then
+            push(1)
+        else
+            push(0)
+        end
     elseif sym == "&" then
         push(bit.band(math.floor(pop()), math.floor(op2)))
     elseif sym == "&&" then
+        if (pop() and op2) then
+            push(1)
+        else
+            push(0)
+        end
         push(pop() and op2)
     elseif sym == "|" then
         push(bit.bor(math.floor(pop()), math.floor(op2)))
     elseif sym == "||" then
-        push(pop() or op2)
+        if (pop() or op2) then
+            push(1)
+        else
+            push(0)
+        end
     else
         error("Unrecognized symbol: " .. sym)
     end
@@ -638,7 +744,6 @@ executeFunction = function(stack, func)
     local function push(val)
         table.insert(stack, val)
     end
-    print("'"..func == "max".."'")
     local op2 = pop() -- op2, if relevant is on the top of the stack, always
     if func == "abs" then
         push(math.abs(op2))
@@ -666,10 +771,25 @@ executeFunction = function(stack, func)
         push(math.max(pop(), op2))
     elseif func == "min" then
         push(math.min(pop(), op2))
+    elseif func == "pow" then
+        push(pop()^op2)
+    elseif func == "rad" then
+        push(math.rad(op2))
+    elseif func == "sin" then
+        push(math.sin(op2))
+    elseif func == "sinh" then
+        push(math.sinh(op2))
+    elseif func == "tan" then
+        push(math.tan(op2))
+    elseif func == "tanh" then
+        push(math.tanh(op2))
     else
         error("Unrecognized function: " .. func)
     end
 end
+
+-- "abs", "acos", "asin", "atan2", "ceil", "cos", "cosh", "deg", "exp", "floor", "log", "rad", "sin", "sinh", "tan", "tanh",
+-- "max", "min", "pow", -- two argument functions
 
 -------------------------------------------------------------------------------------
 local verifyInput
