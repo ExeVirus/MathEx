@@ -1,20 +1,4 @@
-# Mathex
-
-## Regex for equations
-
-Copyright 2024 ExeVirus
-
-Licensed under the Apache License, Version 2.0 (the "License");
-you may not use this file except in compliance with the License.
-You may obtain a copy of the License at
-
-    http://www.apache.org/licenses/LICENSE-2.0
-
-Unless required by applicable law or agreed to in writing, software
-distributed under the License is distributed on an "AS IS" BASIS,
-WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-See the License for the specific language governing permissions and
-limitations under the License.
+# Mathex `Regex for Equations`
 
 ## Overview
 
@@ -28,9 +12,13 @@ Mathex provides aims to provide the same interface in every language:
 ```
     mathex("equation", val1, val2,...valN)
     mathex("equation", arrayOfValues)
+
+e.g.
+    mathex("max(A,B) > C << 2", val, val, val)
 ```
 
 The return value for a *valid* mathex call is either 0 or 1.
+
 -1 indicates an error during processing.
 
 For lua's mathex library, Error strings are *returned*:
@@ -53,8 +41,8 @@ Mathex has 5 different "things" in the language:
 
 C++ Operator Precedence is used, with the addition of ^ for power
 
-Example equation string:
-
+#### Example:
+```lua
 "max(5^A, 300) < abs(A) << 5"
-
-#### Further details can be read in the comments of mathex.lua - it's quite detailed
+```
+#### Further details can be read in the comments of [mathex.lua](/mathex.lua) - it's quite detailed
