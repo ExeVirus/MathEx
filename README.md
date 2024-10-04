@@ -1,90 +1,60 @@
 # Mathex
 
-variable check = 5;
-if(mathex("A%2!=0",check) {
-    odd!
-} else {
-    even!
-}
+## Regex for equations
 
-## Supported tokens:
-- Number: 0-9, with optional period . for decimal
-- Capital Letters (A, B, C, AA, AB): are variables
-- lowercase letters: must be followed by a parenthesis and be a function: abs()
-- symbols: +-*/%^| || & && , etc are also functions, just like a calculator
-- comparisons are also symbols: !=, ==, >=, >, etc.
+Copyright 2024 ExeVirus
 
-## Method
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
 
-1. Regex/patterns(lua) is used to tokenize
-2. Shunting yard variation using the resulting tokens
+    http://www.apache.org/licenses/LICENSE-2.0
 
-# Some background:
-https://www.geeksforgeeks.org/java-program-to-implement-shunting-yard-algorithm/
-https://en.wikipedia.org/wiki/Shunting_yard_algorithm
-https://en.wikipedia.org/wiki/Operator-precedence_parser
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
 
-## Gemini 1.5 flash Output for explanation on variation:
+## Overview
 
-Let's break down how to handle functions and commas in your shunting-yard algorithm.
+Mathex allows you to specify your input validation logic in a
+human-readable, verfiable, matinainable way, as opposed to putting
+validation logic in language specific code that is error prone,
+time-consuming, and highly specific.
 
-**Shunting Yard Fundamentals**
+Mathex provides aims to provide the same interface in every language:
 
-The shunting yard algorithm, originally developed by Edsger W. Dijkstra, is a method for converting infix mathematical expressions (where operators appear between operands) into postfix notation (operators follow operands). This postfix form is easier for computers to evaluate directly.
+```
+    mathex("equation", val1, val2,...valN)
+    mathex("equation", arrayOfValues)
+```
 
-**Handling Functions and Commas**
+The return value for a *valid* mathex call is either 0 or 1.
+-1 indicates an error during processing.
 
-1. **Tokenization:** You've already done this, but it's crucial. Your input expression needs to be broken down into individual tokens (numbers, operators, function names, commas).
+For lua's mathex library, Error strings are *returned*:
+```lua
+result, errorstr = mathex("equation", val1, val2,...valN)
+if result < 0 then error(errorstr)
+```
 
-2. **Operator Precedence:** Define the precedence of operators (including functions) to determine the order of evaluation.  Functions generally have higher precedence than most operators.
+Mathex expects valid IEEE Floating point values for all Value inputs
 
-3. **Function Handling:**
+## Syntax
 
-   * **Identify functions:** Look for tokens representing function names.
-   * **Push functions onto the operator stack:** Functions are treated as operators with high precedence.
-   * **Process Commas:** Commas serve as delimiters within function arguments.
-      * When you encounter a comma, keep pushing arguments onto the output queue.
-      * Once a closing parenthesis is encountered, pop the function from the operator stack and add it to the output queue.
-      * Push the function onto the operator stack.
+Mathex has 5 different "things" in the language:
 
-4. **Parenthesis Handling:**
-   * **Opening parenthesis ( ):** Push the parenthesis onto the operator stack.
-   * **Closing parenthesis ):** Pop operators from the stack until an opening parenthesis is found. Discard both the opening and closing parentheses.
+1. `Numbers      (###.###)`
+2. `Variables    (A, B, C, AA, BB, CC, etc.)`
+3. `Math Symbols (+-*/^%&|!=(), etc.)`
+4. `Functions    (min, max, abs, etc.)`
+5. `Commas       ,`
 
-5. **Operator Stack:**
-   * **Push operators onto the stack:** When you encounter an operator, compare its precedence to the top operator on the stack.
-     * If the current operator has higher precedence, push it onto the stack.
-     * If the current operator has lower or equal precedence, pop operators from the stack and add them to the output queue until you encounter a lower-precedence operator or an opening parenthesis. 
-   * **Pop all remaining operators:** After processing all input tokens, pop all remaining operators from the stack and add them to the output queue.
+C++ Operator Precedence is used, with the addition of ^ for power
 
-**Example: `max(2 + 3, 5)`**
+Example equation string:
 
-1. **Tokens:**  `max`, `(`, `2`, `+`, `3`, `)`, `,`, `5`
-2. **Output Queue:**  `2`, `3`, `+`, `5`, `max` 
+"max(5^A, 300) < abs(A) << 5"
 
-**Explanation:**
-
-* **`max`:**  Pushed onto the operator stack (function).
-* **`(`:** Pushed onto the operator stack.
-* **`2`, `3`, `+`:** Pushed onto the output queue.
-* **`)`:** Pop `+` from the operator stack and push it onto the output queue. Pop `(` and discard it.
-* **`,`:** Push `max` from the operator stack onto the output queue and push it back onto the operator stack.
-* **`5`:** Push onto the output queue.
-* **End of input:** Pop `max` from the operator stack and push it onto the output queue.
-
-**Postfix notation:** `2 3 + 5 max` 
-
-**Key Points**
-
-* **Function Precedence:** Make sure your precedence rules prioritize functions over most other operators.
-* **Commas:** Use commas as delimiters within function arguments to separate them.
-* **Output Queue:** The final output queue contains the postfix expression ready for evaluation.
-
-**Let me know if you have any more specific questions about handling functions and commas in the shunting-yard algorithm!** 
-
-(3+4)*5^max(6+3,3)
-
-3 4 + 5 6 3 + 3 max ^ *
-7 5 6 3 + 3 max ^ *
-7 5 9 3 max ^ *
-7 5 9 ^ *
+#### Further details can be read in the comments of mathex.lua - it's quite detailed
