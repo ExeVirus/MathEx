@@ -263,6 +263,9 @@ handleVariable = function(exp, pos)
     local start, stop = exp:find(patterns.Variable)
     local match = exp:sub(start,stop)
     local value = 0
+    if #match > 6 then
+        return tokenizationError(pos, "'".. match .. "' has too many variables, only up to 308,915,776, or 'ZZZZZZ' are supported.")
+    end
     for i = 1, #match do
         value = value + toValue(match:sub(i,i)) * 26 ^ (#match-i)
     end
@@ -787,9 +790,6 @@ executeFunction = function(stack, func)
         error("Unrecognized function: " .. func)
     end
 end
-
--- "abs", "acos", "asin", "atan2", "ceil", "cos", "cosh", "deg", "exp", "floor", "log", "rad", "sin", "sinh", "tan", "tanh",
--- "max", "min", "pow", -- two argument functions
 
 -------------------------------------------------------------------------------------
 local verifyInput

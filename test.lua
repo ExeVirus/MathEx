@@ -1,6 +1,6 @@
 local inspect = require("inspect")
 local mathex = require("mathex")
---math.randomseed(os.time())
+math.randomseed(3)
 
 local symbols = {
     "(",")","~","!","^","*","/","%","+","-","<<", ">>","<", "<=", ">", ">=","==", "!=","&","|","&&","||",","
@@ -17,7 +17,7 @@ local function numToVariableName(v) -- Variable
     return str
 end
 
-local function generateExpression()
+local function generateFullRandomExpression()
     local len = math.random(1,100)
     local numVariables = 0
     local expr = {}
@@ -46,13 +46,19 @@ local function generateArray(num)
 end
 
 local function doRandomMathex()
-    local expr, numVars = generateExpression()
+    local expr, numVars = generateFullRandomExpression()
+    local array = generateArray(numVars)
+    local result, errorstr = mathex.mathex(expr,array)
+end
+
+local function doValidMathex()
+    local expr, numVars = generateValidExpression()
     local array = generateArray(numVars)
     local result, errorstr = mathex.mathex(expr,array)
 end
 
 local start = os.clock()
-local numToExecute = 1000000
+local numToExecute = 5000000
 for i=1, numToExecute do
     doRandomMathex()
 end
